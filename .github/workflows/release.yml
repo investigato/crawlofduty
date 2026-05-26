@@ -31,6 +31,7 @@ jobs:
         run: |
           declare -A CODENAMES
           CODENAMES["v0.0.1"]="not-good-enough-to-get-a-codename"
+          CODENAMES["v0.1.0"]="now-with-kerberosity"
 
           TAG="${{ github.ref_name }}"
           CODENAME="${CODENAMES[$TAG]:-unknown}"
@@ -46,7 +47,7 @@ jobs:
 
       - name: SHA256 checksums
         working-directory: dist
-        run: sha256sum dumbenum-* > checksums.txt
+        run: sha256sum crawlofduty-* > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -57,11 +58,11 @@ jobs:
 
             | File | Platform |
             |------|----------|
-            | `dumbenum-linux-amd64` | Linux x86_64 |
-            | `dumbenum-linux-arm64` | Linux ARM64 |
-            | `dumbenum-windows-amd64.exe` | Windows x86_64 |
-            | `dumbenum-darwin-arm64` | macOS Apple Silicon |
+            | `crawlofduty-linux-amd64` | Linux x86_64 |
+            | `crawlofduty-linux-arm64` | Linux ARM64 |
+            | `crawlofduty-windows-amd64.exe` | Windows x86_64 |
+            | `crawlofduty-darwin-arm64` | macOS Apple Silicon |
           files: |
-            dist/dumbenum-*
+            dist/crawlofduty-*
             dist/checksums.txt
           generate_release_notes: true
