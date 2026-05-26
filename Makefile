@@ -1,7 +1,7 @@
 VERSION   ?= $(shell git describe --tags --always)
 BUILDTIME ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 CODENAME  ?= unknown
-BINARY    := dumbenum
+BINARY    := crawlofduty
 BUILD_DIR  := dist
 MAIN_PACKAGE = main
 LDFLAGS := -s -w -buildid= \

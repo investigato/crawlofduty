@@ -152,8 +152,14 @@ func main() {
 	var dcIP string
 	flag.StringVarP(&dcIP, "dc-ip", "", "", "Domain Controller IP address")
 
+	var ccachePath string
+	flag.StringVarP(&ccachePath, "ccache", "", "", "use this ccache file")
+
 	var aesKey string
 	flag.StringVarP(&aesKey, "aes-key", "", "", "AES key for Kerberos authentication (format: hex string)")
+
+	var spn string
+	flag.StringVarP(&spn, "spn", "", "", "SPN for Kerberos authentication (format: service/hostname)")
 
 	var noPass bool
 	flag.BoolVarP(&noPass, "no-pass", "", false, "Do not use password")
@@ -244,11 +250,12 @@ func main() {
 	}
 	smbOptions := smb.Options{
 		Host:                  targetIP,
+		Domain:                domain,
 		Port:                  port,
 		DisableEncryption:     noEnc,
 		ForceSMB2:             forceSMB2,
 		RequireMessageSigning: false,
-		//DisableSigning: true,
+		DisableSigning:        true,
 	}
 	var hashBytes []byte
 	if hash != "" {
@@ -261,7 +268,39 @@ func main() {
 		}
 	}
 	if kerberos {
-		fmt.Printf("Kerberos authentication is not implemented in this example\n")
+		if ccachePath != "" {
+			os.Setenv("KRB5CCNAME", ccachePath)
+		}
+		var aesKeyBytes []byte
+		if aesKey != "" {
+			aesKeyBytes, err = hex.DecodeString(aesKey)
+			if err != nil {
+				fmt.Println("Failed to decode AES key")
+				os.Exit(1)
+			}
+		}
+		if spn == "" {
+			spn = fmt.Sprintf("cifs/%s", host)
+		}
+
+		// if the username has @domain.com format, split it and use the part before @ as username and the part after @ as domain, unless domain is explicitly specified with -d/--domain flag
+		if strings.Contains(username, "@") && domain == "" {
+			parts := strings.SplitN(username, "@", 2)
+			username = parts[0]
+			domain = parts[1]
+		} else if strings.Contains(username, "@") && domain != "" {
+			parts := strings.SplitN(username, "@", 2)
+			username = parts[0]
+		}
+		smbOptions.Initiator = &spnego.KRB5Initiator{
+			User:     username,
+			Password: password,
+			Hash:     hashBytes,
+			AESKey:   aesKeyBytes,
+			Domain:   domain,
+			DCIP:     dcIP,
+			SPN:      spn,
+		}
 	} else {
 		smbOptions.Initiator = &spnego.NTLMInitiator{
 			User:        username,

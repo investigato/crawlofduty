@@ -1,19 +1,19 @@
-# dumbenum
+# crawlofduty
 
-<img height="150" alt="dumbenum-logo" src="https://github.com/investigato/dumbenum/blob/main/assets/dumbenum.png" />
+<img height="150" alt="crawlofduty-logo" src="https://github.com/investigato/crawlofduty/blob/main/assets/crawlofduty.png" />
 
 it recursively checks if you can write to shares. that's it.
 
 ## why
 
-because smbmap and netexec lied to me recently. they check ACLs. ACLs are suggestions. `dumbenum` actually tries to create a file. if it works, the share is writable. if it doesn't, it isn't. no assumptions, no inference, no bullshit.
+because smbmap and netexec lied to me recently. they check ACLs. ACLs are suggestions. `crawlofduty` actually tries to create a file. if it works, the share is writable. if it doesn't, it isn't. no assumptions, no inference, no bullshit.
 
 this tool exists because on one recent Saturday afternoon HTB release, SYSVOL showed up READ-ONLY in every tool in the bag. it wasn't.
 
 ## usage
 
 ```bash
-dumbenum [flags]
+crawlofduty [flags]
 
 flags:
     -i, --host string              Hostname or IP address of the target
@@ -48,7 +48,7 @@ flags:
 ### examples
 
 ```bash
-dumbenum --host dc01.corp.local -u f.fakerson -p 'ThisIsNotReal'
+crawlofduty --host dc01.corp.local -u f.fakerson -p 'ThisIsNotReal'
 ```
 
 ## output
