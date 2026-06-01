@@ -28,6 +28,7 @@ flags:
         --debug                    Enable debug output
     -v, --verbose                  Verbose output
     -V, --version                  Show version
+        --yolo                     Check for writable shares & Download every file you can read!
     -e, --exclude-shares string    Comma separated list of shares to exclude from enumeration
     -F, --exclude-folders string   Exclude folders
     -k, --kerberos                 Use Kerberos
