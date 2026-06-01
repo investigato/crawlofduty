@@ -11,7 +11,7 @@
 .ccache
 # Test binary, built with `go test -c`
 *.test
-
+downloads
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*

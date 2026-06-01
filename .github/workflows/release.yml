@@ -32,6 +32,7 @@ jobs:
           declare -A CODENAMES
           CODENAMES["v0.0.1"]="not-good-enough-to-get-a-codename"
           CODENAMES["v0.1.0"]="now-with-kerberosity"
+          CODENAMES["v0.2.0"]="just-use-yolo-mode"
 
           TAG="${{ github.ref_name }}"
           CODENAME="${CODENAMES[$TAG]:-unknown}"

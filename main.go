@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -42,6 +45,7 @@ const (
 type Result struct {
 	Share       string
 	Dir         string
+	Files       []string
 	accessLevel AccessLevel
 }
 type LocalOptions struct {
@@ -99,6 +103,62 @@ func isFlagSet(name string) bool {
 	})
 	return found
 }
+
+const (
+	KiB = 1024
+	MiB = KiB * 1024
+	GiB = MiB * 1024
+)
+
+func downloadFiles(ctx context.Context, session *smb.Connection, files []string, fileSizeThreshold uint64, fileSizeLimit uint64, downloadDir string) {
+	log := zerolog.Ctx(ctx)
+	for _, file := range files {
+		downloadFile(session, log, file, fileSizeThreshold, fileSizeLimit, downloadDir)
+	}
+}
+
+func downloadFile(session *smb.Connection, log *zerolog.Logger, file string, fileSizeThreshold uint64, fileSizeLimit uint64, downloadDir string) {
+	// Strip filepath of prefix
+	tmpPath := strings.TrimPrefix(file, "\\\\")
+
+	parts := strings.Split(tmpPath, "\\")
+	if len(parts) == 0 {
+		log.Error().Msgf("Invalid path to download (%s)\n", file)
+		return
+	}
+	share := parts[1]
+	// When running this tool on linux against a windows SMB share, the path separators will differ
+	metafilepath := strings.Join(parts[2:], "\\")
+
+	remotePath := metafilepath
+	localPathComponents := strings.Split(metafilepath, "\\")
+	localPath := path.Join(downloadDir, share, path.Join(localPathComponents...))
+	if err := os.MkdirAll(path.Dir(localPath), 0755); err != nil {
+		log.Error().Err(err).Msgf("Failed to create local directory for file %s\n", localPath)
+		return
+	}
+	f, err := os.Create(localPath)
+	if err != nil {
+		log.Error().Err(err).Msgf("Failed to create local file %s\n", localPath)
+		return
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Error().Err(err).Msgf("Failed to close local file %s\n", localPath)
+		}
+	}()
+	// just write the damn file to disk
+	err = session.RetrieveFile(share, remotePath, 0, f.Write)
+	if err != nil {
+		log.Error().Err(err).Msgf("Failed to retrieve file %s\n", file)
+		return
+	}
+	// Clear the progress outprint
+	fmt.Printf("\r%s\r", string(make([]byte, 80)))
+	log.Info().Msgf("Downloaded (%s)\n", strings.TrimPrefix(localPath, downloadDir+string(os.PathSeparator)))
+
+}
+
 func main() {
 
 	var host string
@@ -133,6 +193,9 @@ func main() {
 
 	var verbose bool
 	flag.BoolVarP(&verbose, "verbose", "v", false, "Verbose output")
+
+	var yolo bool
+	flag.BoolVarP(&yolo, "yolo", "", false, "YOLO mode (disable all filters and limits on file downloads, be careful!)")
 
 	var versionFlag bool
 	flag.BoolVarP(&versionFlag, "version", "V", false, "Show version")
@@ -187,15 +250,24 @@ func main() {
 
 	var dialTimeout time.Duration
 	flag.DurationVarP(&dialTimeout, "timeout", "", 5*time.Second, "Timeout")
+	// var includeExt string
+	// var excludeExt string
+	// flag.StringVar(&includeExt, "include-exts", "", "")
+	// flag.StringVar(&excludeExt, "exclude-exts", "", "")
+
+	// var includedExts map[string]interface{}
+	// var excludedExts map[string]interface{}
 
 	var err error
 	var excludedFolders map[string]interface{}
+
 	flag.CommandLine.SortFlags = false
 	flag.Parse()
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
+
 	logger := newLogger()
 	ctx := context.Background()
 	ctx = logger.WithContext(ctx)
@@ -203,7 +275,32 @@ func main() {
 		_, _ = fmt.Printf("App Version: %s\nCodename: %s\nBuild Time: %s\n", version, codename, buildTime)
 		os.Exit(0)
 	}
+	// if includeExt != "" && excludeExt != "" {
+	// 	if isFlagSet("include-exts") {
+	// 		logger.Error().Msg("--include-ext and --exclude-ext are mutually exclusive, so don't supply both!")
+	// 		flag.Usage()
+	// 		return
+	// 	}
+	// 	logger.Warn().Msg("Clearing default --include-exts settings as --exclude-exts was specified")
+	// 	includeExt = ""
 
+	// }
+
+	// if includeExt != "" {
+	// 	includedExts = make(map[string]interface{})
+	// 	exts := strings.Split(includeExt, ",")
+	// 	for _, e := range exts {
+	// 		includedExts["."+strings.ToUpper(strings.TrimPrefix(e, "."))] = nil
+	// 	}
+	// }
+
+	// if excludeExt != "" {
+	// 	excludedExts = make(map[string]interface{})
+	// 	exts := strings.Split(excludeExt, ",")
+	// 	for _, e := range exts {
+	// 		excludedExts["."+strings.ToUpper(strings.TrimPrefix(e, "."))] = nil
+	// 	}
+	// }
 	// validate host and/or targetIP
 	if host == "" && targetIP == "" {
 		logger.Error().Msg("Error: Hostname or Target IP must be specified")
@@ -269,7 +366,10 @@ func main() {
 	}
 	if kerberos {
 		if ccachePath != "" {
-			os.Setenv("KRB5CCNAME", ccachePath)
+			err := os.Setenv("KRB5CCNAME", ccachePath)
+			if err != nil {
+				return
+			}
 		}
 		var aesKeyBytes []byte
 		if aesKey != "" {
@@ -432,6 +532,7 @@ func main() {
 			// Exclude share
 			continue
 		}
+
 		if netshare.TypeId == mssrvs.StypeDisktree {
 			shares = append(shares, name)
 		}
@@ -447,18 +548,37 @@ func main() {
 		if slices.Contains(excludeThese, share) {
 			continue
 		}
+		if (len(shareFlag) > 0) && !strings.Contains(shareFlag, share) {
+			continue
+		}
 		sharesToScan = append(sharesToScan, share)
 	}
 	tryWrite := !noWrite
-	err = lukeTreeWalker(ctx, opts.conn, sharesToScan, excludedFolders, recurse, tryWrite, false, "")
+	var results []Result
+	var allFiles []string
+	results, err = lukeTreeWalker(ctx, opts.conn, sharesToScan, excludedFolders, recurse, tryWrite, false, "")
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to list directories recursively")
 		return
 	}
 
+	// if we got here, we have a list of files that we can potentially download, so let's do it!
+	for _, r := range results {
+		for _, file := range r.Files {
+			allFiles = append(allFiles, fmt.Sprintf("\\\\%s\\%s\\%s\\%s", host, r.Share, r.Dir, file))
+
+		}
+	}
+
+	if yolo && len(allFiles) > 0 {
+		// downloadFiles(ctx, opts.conn, allFiles, includedExts, excludedExts, nil, 0, 0, "downloads")
+		downloadFiles(ctx, opts.conn, allFiles, 0, 0, "downloads")
+	}
 }
 
-func lukeTreeWalker(ctx context.Context, session *smb.Connection, shares []string, excludedFolders map[string]interface{}, recurse, tryWrite, followJunctions bool, startDir string) error {
+// now with file listing return!
+func lukeTreeWalker(ctx context.Context, session *smb.Connection, shares []string, excludedFolders map[string]interface{}, recurse, tryWrite, followJunctions bool, startDir string) (allResults []Result, err error) {
+
 	logger := zerolog.Ctx(ctx)
 	dir := strings.ReplaceAll(startDir, "/", `\`)
 	dir = strings.Trim(dir, `\`)
@@ -477,7 +597,7 @@ func lukeTreeWalker(ctx context.Context, session *smb.Connection, shares []strin
 	for _, share := range shares {
 		err := session.TreeConnect(share)
 		if err != nil {
-			if err == smb.StatusMap[smb.StatusBadNetworkName] {
+			if errors.Is(err, smb.StatusMap[smb.StatusBadNetworkName]) {
 				fmt.Printf("Share %s can not be found!\n", share)
 				continue
 			}
@@ -496,7 +616,7 @@ func lukeTreeWalker(ctx context.Context, session *smb.Connection, shares []strin
 
 	wg.Wait()
 	printResults(results, tryWrite)
-	return nil
+	return results, nil
 }
 
 func canWeWriteHere(ctx context.Context, session *smb.Connection, share, dir string) bool {
@@ -570,7 +690,7 @@ func uploadFile(ctx context.Context, conn *smb.Connection, share, localFile, rem
 	f2, err := conn.OpenFileExt(share, modifiedRemoteFile, createOpts)
 	if err != nil {
 		// Check if file exists and we want to replace it
-		if err == smb.StatusMap[smb.StatusObjectNameCollision] {
+		if errors.Is(err, smb.StatusMap[smb.StatusObjectNameCollision]) {
 			if !replaceFile {
 				logger.Error().Msgf("The remote file %q already exists. Run with --replace to overwrite it\n", modifiedRemoteFile)
 				return
@@ -595,16 +715,25 @@ func uploadFile(ctx context.Context, conn *smb.Connection, share, localFile, rem
 
 func workerBee(ctx context.Context, session *smb.Connection, excludedFolders map[string]interface{}, recurse, tryWrite, followJunctions bool, results *[]Result, mu *sync.Mutex, wg *sync.WaitGroup, workChan chan workItem) {
 	logger := zerolog.Ctx(ctx)
+
 	for item := range workChan {
 		contents, err := session.ListDirectory(item.share, item.dir, "")
 		if err != nil {
-			if err != smb.StatusMap[smb.StatusAccessDenied] {
+			if !errors.Is(err, smb.StatusMap[smb.StatusAccessDenied]) {
 				logger.Error().Err(err).Msg("listing directory")
+			}
+			// Collect the filenames before you enter the mutex block, then include them in the struct literal when you do the append.
+			fileNames := make([]string, 0, len(contents))
+			for _, content := range contents {
+				if !content.IsDir {
+					fileNames = append(fileNames, content.Name)
+				}
 			}
 			mu.Lock()
 			*results = append(*results, Result{
 				Share:       item.share,
 				Dir:         item.dir,
+				Files:       fileNames,
 				accessLevel: ACCESS_NONE,
 			})
 			mu.Unlock()
@@ -613,6 +742,7 @@ func workerBee(ctx context.Context, session *smb.Connection, excludedFolders map
 		}
 		if tryWrite {
 			writable := canWeWriteHere(ctx, session, item.share, item.dir)
+
 			mu.Lock()
 			*results = append(*results, Result{
 				Share: item.share,
@@ -635,10 +765,33 @@ func workerBee(ctx context.Context, session *smb.Connection, excludedFolders map
 			mu.Unlock()
 		}
 		for _, content := range contents {
+			// collecting directories for recursion, but also files for downloading later
 			if content.IsDir {
 				if _, ok := excludedFolders[content.Name]; ok {
 					continue
 				}
+				var entryPath string
+				if item.dir == "" {
+					entryPath = content.Name
+				} else {
+					entryPath = item.dir + `\` + content.Name
+				}
+				wg.Add(1)
+				workChan <- workItem{share: item.share, dir: entryPath}
+			}
+			// if it's a file, we add it to the list of files in the current directory result
+			if !content.IsDir {
+				mu.Lock()
+				for i := range *results {
+					if (*results)[i].Share == item.share && (*results)[i].Dir == item.dir {
+						(*results)[i].Files = append((*results)[i].Files, content.Name)
+						break
+					}
+				}
+				mu.Unlock()
+			}
+			// if it's a junction and we want to follow junctions, we also add it to the list of directories to recurse into
+			if content.IsJunction && followJunctions {
 				var entryPath string
 				if item.dir == "" {
 					entryPath = content.Name
