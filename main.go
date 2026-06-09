@@ -132,6 +132,14 @@ func downloadFile(session *smb.Connection, log *zerolog.Logger, file string, fil
 
 	remotePath := metafilepath
 	localPathComponents := strings.Split(metafilepath, "\\")
+	// remove all "" path components to avoid issues with path.Join and to prevent creating unintended directories
+	cleanedLocalPathComponents := make([]string, 0, len(localPathComponents))
+	for _, comp := range localPathComponents {
+		if comp != "" {
+			cleanedLocalPathComponents = append(cleanedLocalPathComponents, comp)
+		}
+	}
+	localPathComponents = cleanedLocalPathComponents
 	localPath := path.Join(downloadDir, share, path.Join(localPathComponents...))
 	if err := os.MkdirAll(path.Dir(localPath), 0755); err != nil {
 		log.Error().Err(err).Msgf("Failed to create local directory for file %s\n", localPath)
@@ -155,7 +163,7 @@ func downloadFile(session *smb.Connection, log *zerolog.Logger, file string, fil
 	}
 	// Clear the progress outprint
 	fmt.Printf("\r%s\r", string(make([]byte, 80)))
-	log.Info().Msgf("Downloaded (%s)\n", strings.TrimPrefix(localPath, downloadDir+string(os.PathSeparator)))
+	log.Info().Msgf("Downloaded (%s)", strings.TrimPrefix(localPath, downloadDir+string(os.PathSeparator)))
 
 }
 
@@ -565,8 +573,8 @@ func main() {
 	// if we got here, we have a list of files that we can potentially download, so let's do it!
 	for _, r := range results {
 		for _, file := range r.Files {
-			allFiles = append(allFiles, fmt.Sprintf("\\\\%s\\%s\\%s\\%s", host, r.Share, r.Dir, file))
-
+			var resultFilepath = fmt.Sprintf("\\\\%s\\%s\\%s", host, r.Share, file)
+			allFiles = append(allFiles, resultFilepath)
 		}
 	}
 
@@ -784,7 +792,13 @@ func workerBee(ctx context.Context, session *smb.Connection, excludedFolders map
 				mu.Lock()
 				for i := range *results {
 					if (*results)[i].Share == item.share && (*results)[i].Dir == item.dir {
-						(*results)[i].Files = append((*results)[i].Files, content.Name)
+						var entryPath string
+						if item.dir == "" {
+							entryPath = content.Name
+						} else {
+							entryPath = item.dir + `\` + content.Name
+						}
+						(*results)[i].Files = append((*results)[i].Files, entryPath)
 						break
 					}
 				}
